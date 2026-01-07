@@ -1,102 +1,89 @@
-name: Build DM17 for nRF52840 DK
+name: DM17 Final Build
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:  # 允许手动触发
-
-env:
-  BOARD: "nrf52840dk_nrf52840"
-  SHIELD: "dm17"
-  CONFIG_DIR: "${{ github.workspace }}/config"
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Install dependencies
+    - uses: actions/checkout@v4
+    
+    - name: Setup
       run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          git \
-          cmake \
-          ninja-build \
-          gperf \
-          python3 \
-          python3-pip \
-          python3-setuptools \
-          libusb-1.0-0 \
-          libusb-1.0-0-dev
-          
-    - name: Install west
-      run: |
+        sudo apt update
+        sudo apt install -y git cmake python3-pip
         pip3 install west
-        west --version
         
-    - name: Setup ZMK environment
+    - name: Prepare ZMK
       run: |
-        # 方法：直接克隆 ZMK 并初始化
-        git clone https://github.com/zmkfirmware/zmk.git --depth 1 zmk-src
-        cd zmk-src
+        # 方法：使用 git 直接克隆
+        git clone https://github.com/zmkfirmware/zmk.git zmk-src --depth 1
         
-        # 初始化 west
+        # 设置 west
+        cd zmk-src
         west init -l .
         west update
         
-        echo "✅ ZMK 环境设置完成"
-        echo "当前目录: $(pwd)"
+        echo "✅ ZMK 准备完成"
         echo "app 目录:"
-        ls -la app/ 2>/dev/null || echo "app 目录未找到"
+        ls -la app/ 2>/dev/null || echo "警告: app 目录可能不存在"
         
-    - name: Install Zephyr dependencies
-      run: |
-        cd zmk-src
-        pip3 install -r zephyr/scripts/requirements.txt
-        
-    - name: Build firmware
+    - name: Build with explicit path
       run: |
         cd zmk-src
         
-        echo "正在构建 DM17 固件..."
-        echo "板子: ${{ env.BOARD }}"
-        echo "键盘: ${{ env.SHIELD }}"
-        echo "配置目录: ${{ env.CONFIG_DIR }}"
+        # 明确指定源目录
+        if [ -d "app" ]; then
+          echo "使用 ./app 作为源目录"
+          west build -b nrf52840dk_nrf52840 ./app -- \
+            -DSHIELD=dm17 \
+            -DZMK_CONFIG="${{ github.workspace }}/config"
+        elif [ -d "zmk/app" ]; then
+          echo "使用 zmk/app 作为源目录"
+          west build -b nrf52840dk_nrf52840 zmk/app -- \
+            -DSHIELD=dm17 \
+            -DZMK_CONFIG="${{ github.workspace }}/config"
+        else
+          echo "错误：找不到 app 目录"
+          exit 1
+        fi
         
-        # 构建命令
-        west build -b ${{ env.BOARD }} app -- \
-          -DSHIELD=${{ env.SHIELD }} \
-          -DZMK_CONFIG="${{ env.CONFIG_DIR }}" \
-          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-        
-        echo "✅ 构建完成"
-        ls -la build/zephyr/*.uf2 build/zephyr/*.hex 2>/dev/null || echo "未找到输出文件"
-        
-    - name: Save firmware to config folder
+    - name: Collect firmware
       run: |
-        # 创建固件目录
+        # 查找并复制固件
         mkdir -p config/firmware
         
-        # 复制固件文件
-        if [ -f "zmk-src/build/zephyr/zmk.uf2" ]; then
-          cp zmk-src/build/zephyr/zmk.uf2 "config/firmware/dm17-${{ env.BOARD }}.uf2"
-          echo "✅ UF2 固件已保存"
+        # 尝试多个可能的位置
+        possible_locations=(
+          "zmk-src/build/zephyr/zmk.uf2"
+          "build/zephyr/zmk.uf2"
+          "zmk/build/zephyr/zmk.uf2"
+        )
+        
+        for loc in "${possible_locations[@]}"; do
+          if [ -f "$loc" ]; then
+            cp "$loc" config/firmware/dm17.uf2
+            echo "✅ 从 $loc 复制固件"
+            break
+          fi
+        done
+        
+        if [ ! -f "config/firmware/dm17.uf2" ]; then
+          echo "❌ 未找到固件文件"
+          echo "搜索所有 .uf2 文件:"
+          find . -name "*.uf2" 2>/dev/null || echo "没有找到任何 .uf2 文件"
+        else
+          echo "✅ 固件已保存到 config/firmware/dm17.uf2"
+          ls -l config/firmware/dm17.uf2
         fi
         
-        if [ -f "zmk-src/build/zephyr/zmk.hex" ]; then
-          cp zmk-src/build/zephyr/zmk.hex "config/firmware/dm17-${{ env.BOARD }}.hex"
-          echo "✅ HEX 固件已保存"
-        fi
-        
-        echo "固件目录内容:"
-        ls -la config/firmware/
-        
-    - name: Upload firmware artifacts
+    - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: dm17-nrf52840dk-firmware
-        path: config/firmware/
-        retention-days: 30
+        name: dm17-firmware
+        path: config/firmware/dm17.uf2
+        if-no-files-found: warn
