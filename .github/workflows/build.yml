@@ -55,5 +55,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: dm17-firmware
-        path: zmk/build/zephyr/zmk.uf2
+        path: config/firmware/*.uf2
         if-no-files-found: warn
