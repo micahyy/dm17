@@ -1,49 +1,68 @@
-on: [push, pull_request, workflow_dispatch]
+name: Build ZMK Firmware
 
-name: Build
+on: [push, pull_request, workflow_dispatch]
 
 jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: zmkfirmware/zmk-build-arm:2.5
-    name: Build
+      image: zmkfirmware/zmk-build-arm:stable  # 使用稳定版镜像
+    name: Build Firmware
+    
     steps:
-      - name: Checkout
-        uses: actions/checkout@v2
-      - name: Cache west modules
-        uses: actions/cache@v2
-        env:
-          cache-name: cache-zephyr-modules
+      - name: Checkout Repository
+        uses: actions/checkout@v3
         with:
-          path: |
-            modules/
-            tools/
-            zephyr/
-            bootloader/
-            zmk/
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('manifest-dir/west.yml') }}
-          restore-keys: |
-            ${{ runner.os }}-build-${{ env.cache-name }}-
-            ${{ runner.os }}-build-
-            ${{ runner.os }}-
+          submodules: recursive  # 重要：递归克隆子模块
+          
+      # 移除或修复缓存步骤（当前配置不正确，建议先不用缓存）
+      # - name: Cache west modules
+      #   uses: actions/cache@v3
+      #   ...
+      
       - name: West Init
-        run: west init -l config
+        run: |
+          west init -l app/  # 正确初始化，指向app目录
+          
       - name: West Update
         run: west update
-      - name: West Zephyr export
+        
+      - name: West Zephyr Export
         run: west zephyr-export
-      - name: West Build (KEYBOARD_TITLE)
-        run: west build -s zmk/app -b BOARD_NAME -- -DSHIELD=SHIELD_NAME -DZMK_CONFIG="${GITHUB_WORKSPACE}/config"
-      - name: KEYBOARD_TITLE DTS File
-        if: ${{ always() }}
-        run: cat -n build/zephyr/BOARD_NAME.dts.pre.tmp
-      - name: KEYBOARD_TITLE Kconfig file
-        run: cat build/zephyr/.config | grep -v "^#" | grep -v "^$"
-      - name: Rename zmk.uf2
-        run: cp build/zephyr/zmk.uf2 SHIELD_NAME_BOARD_NAME.uf2
-      - name: Archive (KEYBOARD_TITLE)
-        uses: actions/upload-artifact@v2
+        
+      - name: Install Python Dependencies
+        run: |
+          pip install -r zephyr/scripts/requirements.txt
+          pip install -r zmk/requirements.txt
+          
+      # 根据你的硬件替换以下参数：
+      # BOARD_NAME: 你的开发板名称（如：e73_2g4m08s1c）
+      # SHIELD_NAME: 你的键盘shield名称（自定义，如：my_e73_keyboard）
+      - name: Build Firmware
+        run: |
+          west build -s zmk/app -b e73_2g4m08s1c -- \
+            -DSHIELD=my_e73_keyboard \
+            -DZMK_CONFIG="$GITHUB_WORKSPACE/config"
+            
+      - name: Rename UF2 File
+        run: |
+          cp build/zephyr/zmk.uf2 my_e73_keyboard_e73_2g4m08s1c.uf2
+          
+      - name: Upload Firmware Artifact
+        uses: actions/upload-artifact@v3
         with:
           name: firmware
-          path: SHIELD_NAME_BOARD_NAME.uf2
+          path: my_e73_keyboard_e73_2g4m08s1c.uf2
+          
+      # 调试信息（可选）
+      - name: Show DTS File
+        if: ${{ always() }}
+        run: |
+          echo "=== DTS Configuration ==="
+          [ -f build/zephyr/zephyr.dts ] && cat build/zephyr/zephyr.dts | head -50
+          
+      - name: Show Kconfig
+        run: |
+          echo "=== Kconfig Settings ==="
+          [ -f build/zephyr/.config ] && \
+            cat build/zephyr/.config | grep -v "^#" | grep -v "^$" | sort
