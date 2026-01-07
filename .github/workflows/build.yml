@@ -1,4 +1,4 @@
-name: DM17 Final Build
+name: Build DM17 Firmware
 
 on:
   push:
@@ -12,78 +12,48 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Setup
+    - name: Setup environment
       run: |
-        sudo apt update
-        sudo apt install -y git cmake python3-pip
-        pip3 install west
+        sudo apt-get update
+        sudo apt-get install -y \
+          git \
+          cmake \
+          ninja-build \
+          gperf \
+          python3 \
+          python3-pip \
+          python3-setuptools \
+          wget
         
-    - name: Prepare ZMK
+    - name: Install west
+      run: pip3 install west
+        
+    - name: Initialize ZMK
       run: |
-        # 方法：使用 git 直接克隆
-        git clone https://github.com/zmkfirmware/zmk.git zmk-src --depth 1
-        
-        # 设置 west
-        cd zmk-src
-        west init -l .
+        # 正确的方法：在当前目录初始化
+        west init zmk
+        cd zmka
         west update
         
-        echo "✅ ZMK 准备完成"
-        echo "app 目录:"
-        ls -la app/ 2>/dev/null || echo "警告: app 目录可能不存在"
-        
-    - name: Build with explicit path
+    - name: Install dependencies
       run: |
-        cd zmk-src
+        cd zmk
+        pip3 install -r zephyr/scripts/requirements.txt
         
-        # 明确指定源目录
-        if [ -d "app" ]; then
-          echo "使用 ./app 作为源目录"
-          west build -b nrf52840dk_nrf52840 ./app -- \
-            -DSHIELD=dm17 \
-            -DZMK_CONFIG="${{ github.workspace }}/config"
-        elif [ -d "zmk/app" ]; then
-          echo "使用 zmk/app 作为源目录"
-          west build -b nrf52840dk_nrf52840 zmk/app -- \
-            -DSHIELD=dm17 \
-            -DZMK_CONFIG="${{ github.workspace }}/config"
-        else
-          echo "错误：找不到 app 目录"
-          exit 1
-        fi
-        
-    - name: Collect firmware
+    - name: Build firmware
       run: |
-        # 查找并复制固件
-        mkdir -p config/firmware
+        cd zmk
+        west build -b nice_nano_v2 app -- \
+          -DSHIELD=dm17 \
+          -DZMK_CONFIG="${{ github.workspace }}/config"
+          
+        echo "Build completed!"
+        ls -la build/zephyr/*.uf2 2>/dev/null || echo "No .uf2 file found"
+        ls -la build/zephyr/*.hex 2>/dev/null || echo "No .hex file found"
         
-        # 尝试多个可能的位置
-        possible_locations=(
-          "zmk-src/build/zephyr/zmk.uf2"
-          "build/zephyr/zmk.uf2"
-          "zmk/build/zephyr/zmk.uf2"
-        )
-        
-        for loc in "${possible_locations[@]}"; do
-          if [ -f "$loc" ]; then
-            cp "$loc" config/firmware/dm17.uf2
-            echo "✅ 从 $loc 复制固件"
-            break
-          fi
-        done
-        
-        if [ ! -f "config/firmware/dm17.uf2" ]; then
-          echo "❌ 未找到固件文件"
-          echo "搜索所有 .uf2 文件:"
-          find . -name "*.uf2" 2>/dev/null || echo "没有找到任何 .uf2 文件"
-        else
-          echo "✅ 固件已保存到 config/firmware/dm17.uf2"
-          ls -l config/firmware/dm17.uf2
-        fi
-        
-    - name: Upload
+    - name: Upload firmware
       uses: actions/upload-artifact@v4
       with:
         name: dm17-firmware
-        path: config/firmware/dm17.uf2
+        path: firmware/*.uf2
         if-no-files-found: warn
