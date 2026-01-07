@@ -1,68 +1,197 @@
 name: Build ZMK Firmware
 
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # 允许手动触发
+    inputs:
+      board:
+        description: 'Target board'
+        required: true
+        default: 'nrf52840dk_nrf52840'
+      shield:
+        description: 'Shield name'
+        required: true
+        default: 'dm17_dk'
+
+env:
+  ZMK_DIR: ./zmk
+  CONFIG_DIR: ./config
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    container:
-      image: zmkfirmware/zmk-build-arm:stable  # 使用稳定版镜像
-    name: Build Firmware
-    
+  setup:
+    runs-on: ubuntu-22.04
+    outputs:
+      zmk_version: ${{ steps.get_version.outputs.version }}
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          submodules: recursive  # 重要：递归克隆子模块
-          
-      # 移除或修复缓存步骤（当前配置不正确，建议先不用缓存）
-      # - name: Cache west modules
-      #   uses: actions/cache@v3
-      #   ...
-      
-      - name: West Init
+          submodules: recursive
+
+      - name: Get ZMK version
+        id: get_version
         run: |
-          west init -l app/  # 正确初始化，指向app目录
-          
-      - name: West Update
-        run: west update
-        
-      - name: West Zephyr Export
-        run: west zephyr-export
-        
-      - name: Install Python Dependencies
+          if [ -f "$ZMK_DIR/VERSION" ]; then
+            VERSION=$(cat $ZMK_DIR/VERSION)
+          else
+            VERSION=$(git describe --tags --always)
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        board: [nrf52840dk_nrf52840]
+        shield: [dm17_dk]
+        include:
+          - board: nrf52840dk_nrf52840
+            shield: dm17_dk
+            artifact_name: dm17-nrf52840dk
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
         run: |
-          pip install -r zephyr/scripts/requirements.txt
-          pip install -r zmk/requirements.txt
-          
-      # 根据你的硬件替换以下参数：
-      # BOARD_NAME: 你的开发板名称（如：e73_2g4m08s1c）
-      # SHIELD_NAME: 你的键盘shield名称（自定义，如：my_e73_keyboard）
-      - name: Build Firmware
+          sudo apt-get update
+          sudo apt-get install -y \
+            git \
+            cmake \
+            ninja-build \
+            gperf \
+            ccache \
+            dfu-util \
+            device-tree-compiler \
+            wget \
+            python3-dev \
+            python3-pip \
+            python3-setuptools \
+            python3-tk \
+            python3-wheel \
+            xz-utils \
+            file \
+            make \
+            gcc \
+            gcc-multilib \
+            g++-multilib \
+            libsdl2-dev
+
+      - name: Install west
+        run: pip3 install west
+
+      - name: Initialize ZMK
         run: |
-          west build -s zmk/app -b e73_2g4m08s1c -- \
-            -DSHIELD=my_e73_keyboard \
-            -DZMK_CONFIG="$GITHUB_WORKSPACE/config"
+          if [ ! -d "$ZMK_DIR" ]; then
+            west init -l ${{ github.workspace }}
+          fi
+          cd $ZMK_DIR
+          west update
+          west zephyr-export
+
+      - name: Install Zephyr Python dependencies
+        run: |
+          cd $ZMK_DIR
+          pip3 install -r zephyr/scripts/requirements.txt
+          pip3 install -r bootloader/mcuboot/scripts/requirements.txt
+
+      - name: Install Zephyr SDK
+        run: |
+          cd /opt
+          wget https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.16.3/zephyr-sdk-0.16.3_linux-x86_64.tar.xz
+          tar xf zephyr-sdk-0.16.3_linux-x86_64.tar.xz
+          cd zephyr-sdk-0.16.3
+          ./setup.sh -t arm-zephyr-eabi -h -c
+
+      - name: Build firmware
+        run: |
+          cd $ZMK_DIR
+          
+          # 创建构建目录
+          mkdir -p build/${{ matrix.board }}/${{ matrix.shield }}
+          cd build/${{ matrix.board }}/${{ matrix.shield }}
+          
+          # 生成构建命令
+          BUILD_CMD="west build -b ${{ matrix.board }} \
+            -d build \
+            ../../../app \
+            -- \
+            -DZMK_CONFIG=\"${{ github.workspace }}/config\" \
+            -DSHIELD=${{ matrix.shield }}"
+          
+          echo "Build command: $BUILD_CMD"
+          
+          # 执行构建
+          eval $BUILD_CMD
+          
+          # 检查生成的文件
+          ls -la build/zephyr/*.{uf2,hex,bin} 2>/dev/null || true
+
+      - name: Archive firmware artifacts
+        uses: actions/upload-artifact@v4  # 使用 v4
+        with:
+          name: ${{ matrix.artifact_name }}-firmware
+          path: |
+            ${{ env.ZMK_DIR }}/build/${{ matrix.board }}/${{ matrix.shield }}/build/zephyr/zmk.uf2
+            ${{ env.ZMK_DIR }}/build/${{ matrix.board }}/${{ matrix.shield }}/build/zephyr/zmk.hex
+            ${{ env.ZMK_DIR }}/build/${{ matrix.board }}/${{ matrix.shield }}/build/zephyr/zmk.bin
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}-logs
+          path: |
+            ${{ env.ZMK_DIR }}/build/${{ matrix.board }}/${{ matrix.shield }}/build/**/*.log
+            ${{ env.ZMK_DIR }}/build/${{ matrix.board }}/${{ matrix.shield }}/build/**/*.txt
+          retention-days: 3
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download firmware artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ github.ref_name }}
+          body: |
+            ZMK Firmware for DM17 on nRF52840 DK
             
-      - name: Rename UF2 File
-        run: |
-          cp build/zephyr/zmk.uf2 my_e73_keyboard_e73_2g4m08s1c.uf2
-          
-      - name: Upload Firmware Artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: firmware
-          path: my_e73_keyboard_e73_2g4m08s1c.uf2
-          
-      # 调试信息（可选）
-      - name: Show DTS File
-        if: ${{ always() }}
-        run: |
-          echo "=== DTS Configuration ==="
-          [ -f build/zephyr/zephyr.dts ] && cat build/zephyr/zephyr.dts | head -50
-          
-      - name: Show Kconfig
-        run: |
-          echo "=== Kconfig Settings ==="
-          [ -f build/zephyr/.config ] && \
-            cat build/zephyr/.config | grep -v "^#" | grep -v "^$" | sort
+            **Board**: nrf52840dk_nrf52840
+            **Shield**: dm17_dk
+            **Features**:
+            - 17-key matrix with encoders
+            - WS2812 per-key RGB lighting
+            - Bluetooth 5.0
+            - VIAL support
+            
+            **Flash instructions**:
+            1. Enter bootloader mode (reset while holding boot button)
+            2. Copy `.uf2` file to the USB drive
+          files: |
+            ./artifacts/**/*.uf2
+            ./artifacts/**/*.hex
+            ./artifacts/**/*.bin
+          draft: false
+          prerelease: false
