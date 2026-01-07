@@ -1,0 +1,3 @@
+# 这是 ZMK 模板的主构建配置文件
+board: nrf52840dk_nrf52840
+shield: dm17
