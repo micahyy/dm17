@@ -1,4 +1,4 @@
-name: DM17 Simple Build
+name: ZMK Build Action
 
 on:
   push:
@@ -11,39 +11,19 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y git cmake ninja-build python3-pip
-        pip3 install west
+      with:
+        submodules: recursive
         
-    - name: Build with ZMK Docker image
-      run: |
-        # 使用官方ZMK Docker镜像 - 最简单的方法
-        docker pull zmkfirmware/zmk-build-arm:3.0
+    - name: Build with zmk-build-action
+      uses: zmkfirmware/zmk-build-action@v2
+      with:
+        board: nice_nano_v2
+        shield: dm17
+        keymap: default
+        config-dir: ./config
         
-        docker run --rm -v "${{ github.workspace }}:/workspace" \
-          -w /workspace \
-          zmkfirmware/zmk-build-arm:3.0 \
-          /bin/bash -c "
-            # 初始化工作区
-            west init -l .
-            cd zmk
-            west update
-            west zephyr-export
-            
-            # 构建DM17
-            west build -b nice_nano_v2 app -- \
-              -DSHIELD=dm17 \
-              -DZMK_CONFIG=/workspace/config
-              
-            # 复制固件
-            cp build/zephyr/zmk.uf2 /workspace/dm17.uf2
-          "
-          
-    - name: Upload firmware
+    - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: dm17-keyboard
-        path: dm17.uf2
+        name: dm17-firmware
+        path: firmware/*.uf2
