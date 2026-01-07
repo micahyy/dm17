@@ -3,6 +3,6 @@ id: dm17
 name: dm17
 type: shield
 url: https://maiku.taobao.com/
-requires: [nrf52840dk/nrf52840]
+requires: [nrf52840dk_nrf52840]
 features:
   - keys
