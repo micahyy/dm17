@@ -10,9 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Setup environment
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -21,39 +22,57 @@ jobs:
           ninja-build \
           gperf \
           python3 \
-          python3-pip \
-          python3-setuptools \
-          wget
-        
+          python3-pip
+          
     - name: Install west
       run: pip3 install west
-        
-    - name: Initialize ZMK
+      
+    - name: Setup ZMK environment
       run: |
-        # 正确的方法：在当前目录初始化
+        # 方法1：使用推荐的初始化方式
         west init zmk
-        cd zmka
+        cd zmk
         west update
+        west zephyr-export
+        cd ..
         
-    - name: Install dependencies
+    - name: Install Zephyr dependencies
       run: |
         cd zmk
         pip3 install -r zephyr/scripts/requirements.txt
+        cd ..
         
     - name: Build firmware
       run: |
         cd zmk
+        
+        echo "当前目录: $(pwd)"
+        echo "检查 app 目录是否存在:"
+        ls -la app/ 2>/dev/null || echo "app 目录不存在"
+        
+        # 构建固件
         west build -b nice_nano_v2 app -- \
           -DSHIELD=dm17 \
           -DZMK_CONFIG="${{ github.workspace }}/config"
           
-        echo "Build completed!"
-        ls -la build/zephyr/*.uf2 2>/dev/null || echo "No .uf2 file found"
-        ls -la build/zephyr/*.hex 2>/dev/null || echo "No .hex file found"
+    - name: Save firmware
+      run: |
+        # 确保 config/firmware 目录存在
+        mkdir -p config/firmware
         
-    - name: Upload firmware
+        # 复制固件
+        if [ -f "zmk/build/zephyr/zmk.uf2" ]; then
+          cp zmk/build/zephyr/zmk.uf2 config/firmware/dm17.uf2
+          echo "✅ 固件已保存到 config/firmware/dm17.uf2"
+        else
+          echo "❌ 未找到固件文件"
+          # 查找其他可能的路径
+          find . -name "*.uf2" 2>/dev/null || echo "没有找到任何 .uf2 文件"
+        fi
+        
+    - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: dm17-firmware
-        path: firmware/*.uf2
+        path: firmware/dm17.uf2
         if-no-files-found: warn
