@@ -1,4 +1,4 @@
-name: Build DM17 Firmware
+name: DM17 Simple Build
 
 on:
   push:
@@ -10,58 +10,40 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-        
+    - uses: actions/checkout@v4
+    
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y \
-          git \
-          cmake \
-          ninja-build \
-          gperf \
-          python3-dev \
-          python3-pip \
-          python3-setuptools
-        
-    - name: Install west
-      run: |
+        sudo apt-get install -y git cmake ninja-build python3-pip
         pip3 install west
-        west --version
         
-    - name: Initialize ZMK workspace
+    - name: Build with ZMK Docker image
       run: |
-        # 正确初始化ZMK
-        west init -m https://github.com/zmkfirmware/zmk.git --mr main
-        west update
+        # 使用官方ZMK Docker镜像 - 最简单的方法
+        docker pull zmkfirmware/zmk-build-arm:3.0
         
-    - name: Install Zephyr dependencies
-      run: |
-        pip3 install -r zephyr/scripts/requirements.txt
-        pip3 install -r zmk/bootloader/mcuboot/scripts/requirements.txt
-        
-    - name: Build DM17 firmware
-      run: |
-        # 构建固件
-        west build -p always -b nice_nano_v2 zmk/app -- \
-          -DSHIELD=dm17 \
-          -DZMK_CONFIG="${{ github.workspace }}/config" \
-          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-        
-        echo "Build completed!"
-        ls -la build/zephyr/*.uf2 build/zephyr/*.hex 2>/dev/null || true
-        
+        docker run --rm -v "${{ github.workspace }}:/workspace" \
+          -w /workspace \
+          zmkfirmware/zmk-build-arm:3.0 \
+          /bin/bash -c "
+            # 初始化工作区
+            west init -l .
+            cd zmk
+            west update
+            west zephyr-export
+            
+            # 构建DM17
+            west build -b nice_nano_v2 app -- \
+              -DSHIELD=dm17 \
+              -DZMK_CONFIG=/workspace/config
+              
+            # 复制固件
+            cp build/zephyr/zmk.uf2 /workspace/dm17.uf2
+          "
+          
     - name: Upload firmware
       uses: actions/upload-artifact@v4
       with:
-        name: dm17-firmware
-        path: |
-          build/zephyr/zmk.uf2
-          build/zephyr/zmk.hex
-        retention-days: 30
+        name: dm17-keyboard
+        path: dm17.uf2
