@@ -1,4 +1,4 @@
-name: ZMK Build Action
+name: Build DM17 Firmware
 
 on:
   push:
@@ -11,19 +11,49 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
-      with:
-        submodules: recursive
+    
+    - name: Setup environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          git \
+          cmake \
+          ninja-build \
+          gperf \
+          python3 \
+          python3-pip \
+          python3-setuptools \
+          wget
         
-    - name: Build with zmk-build-action
-      uses: zmkfirmware/zmk-build-action@v2
-      with:
-        board: nice_nano_v2
-        shield: dm17
-        keymap: default
-        config-dir: ./config
+    - name: Install west
+      run: pip3 install west
         
-    - name: Upload artifacts
+    - name: Initialize ZMK
+      run: |
+        # 正确的方法：在当前目录初始化
+        west init zmk
+        cd zmk
+        west update
+        
+    - name: Install dependencies
+      run: |
+        cd zmk
+        pip3 install -r zephyr/scripts/requirements.txt
+        
+    - name: Build firmware
+      run: |
+        cd zmk
+        west build -b nice_nano_v2 app -- \
+          -DSHIELD=dm17 \
+          -DZMK_CONFIG="${{ github.workspace }}/config"
+          
+        echo "Build completed!"
+        ls -la build/zephyr/*.uf2 2>/dev/null || echo "No .uf2 file found"
+        ls -la build/zephyr/*.hex 2>/dev/null || echo "No .hex file found"
+        
+    - name: Upload firmware
       uses: actions/upload-artifact@v4
       with:
         name: dm17-firmware
-        path: firmware/*.uf2
+        path: zmk/build/zephyr/zmk.uf2
+        if-no-files-found: warn
