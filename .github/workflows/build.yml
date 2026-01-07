@@ -14,7 +14,7 @@ on:
       shield:
         description: 'Shield name'
         required: true
-        default: 'dm17_dk'
+        default: 'dm17'
 
 env:
   ZEPHYR_BASE: ./zmk/zephyr
@@ -26,7 +26,7 @@ jobs:
     strategy:
       matrix:
         board: [nrf52840dk_nrf52840]
-        shield: [dm17_dk]
+        shield: [dm17]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
