@@ -1,4 +1,4 @@
-name: Build DM17 Firmware
+name: DM17 Build
 
 on:
   push:
@@ -24,55 +24,31 @@ jobs:
           python3 \
           python3-pip
           
-    - name: Install west
-      run: pip3 install west
-      
-    - name: Setup ZMK environment
+    - name: Run build script
       run: |
-        # 方法1：使用推荐的初始化方式
-        west init zmk
-        cd zmk
-        west update
-        west zephyr-export
-        cd ..
+        chmod +x build.sh
+        ./build.sh
         
-    - name: Install Zephyr dependencies
+    - name: Check firmware location
       run: |
-        cd zmk
-        pip3 install -r zephyr/scripts/requirements.txt
-        cd ..
-        
-    - name: Build firmware
-      run: |
-        cd zmk
-        
+        echo "检查固件位置..."
         echo "当前目录: $(pwd)"
-        echo "检查 app 目录是否存在:"
-        ls -la app/ 2>/dev/null || echo "app 目录不存在"
+        echo "查找 .uf2 文件:"
+        find . -name "*.uf2" 2>/dev/null || echo "没有找到 .uf2 文件"
+        echo ""
+        echo "目录结构:"
+        ls -la
+        echo ""
+        echo "firmware 目录:"
+        ls -la firmware/ 2>/dev/null || echo "firmware 目录不存在"
         
-        # 构建固件
-        west build -b nice_nano_v2 app -- \
-          -DSHIELD=dm17 \
-          -DZMK_CONFIG="${{ github.workspace }}/config"
-          
-    - name: Save firmware
-      run: |
-        # 确保 config/firmware 目录存在
-        mkdir -p config/firmware
-        
-        # 复制固件
-        if [ -f "zmk/build/zephyr/zmk.uf2" ]; then
-          cp zmk/build/zephyr/zmk.uf2 config/firmware/dm17.uf2
-          echo "✅ 固件已保存到 config/firmware/dm17.uf2"
-        else
-          echo "❌ 未找到固件文件"
-          # 查找其他可能的路径
-          find . -name "*.uf2" 2>/dev/null || echo "没有找到任何 .uf2 文件"
-        fi
-        
-    - name: Upload artifacts
+    - name: Upload firmware
       uses: actions/upload-artifact@v4
       with:
-        name: dm17-firmware
-        path: firmware/dm17.uf2
+        name: dm17-keyboard
+        path: |
+          firmware/dm17.uf2
+          firmware/*.uf2
+          dm17.uf2
+          *.uf2
         if-no-files-found: warn
