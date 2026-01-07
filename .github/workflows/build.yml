@@ -1,18 +1,24 @@
-name: Build DM17 Firmware
+name: Build DM17 for nRF52840 DK
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:
+  workflow_dispatch:  # 允许手动触发
+
+env:
+  BOARD: "nrf52840dk_nrf52840"
+  SHIELD: "dm17"
+  CONFIG_DIR: "${{ github.workspace }}/config"
 
 jobs:
   build:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Setup environment
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -23,37 +29,74 @@ jobs:
           python3 \
           python3-pip \
           python3-setuptools \
-          wget
-        
+          libusb-1.0-0 \
+          libusb-1.0-0-dev
+          
     - name: Install west
-      run: pip3 install west
-        
-    - name: Initialize ZMK
       run: |
-        # 正确的方法：在当前目录初始化
-        west init zmk
-        cd zmk
+        pip3 install west
+        west --version
+        
+    - name: Setup ZMK environment
+      run: |
+        # 方法：直接克隆 ZMK 并初始化
+        git clone https://github.com/zmkfirmware/zmk.git --depth 1 zmk-src
+        cd zmk-src
+        
+        # 初始化 west
+        west init -l .
         west update
         
-    - name: Install dependencies
+        echo "✅ ZMK 环境设置完成"
+        echo "当前目录: $(pwd)"
+        echo "app 目录:"
+        ls -la app/ 2>/dev/null || echo "app 目录未找到"
+        
+    - name: Install Zephyr dependencies
       run: |
-        cd zmk
+        cd zmk-src
         pip3 install -r zephyr/scripts/requirements.txt
         
     - name: Build firmware
       run: |
-        cd zmk
-        west build -b nice_nano_v2 app -- \
-          -DSHIELD=dm17 \
-          -DZMK_CONFIG="${{ github.workspace }}/config"
-          
-        echo "Build completed!"
-        ls -la build/zephyr/*.uf2 2>/dev/null || echo "No .uf2 file found"
-        ls -la build/zephyr/*.hex 2>/dev/null || echo "No .hex file found"
+        cd zmk-src
         
-    - name: Upload firmware
+        echo "正在构建 DM17 固件..."
+        echo "板子: ${{ env.BOARD }}"
+        echo "键盘: ${{ env.SHIELD }}"
+        echo "配置目录: ${{ env.CONFIG_DIR }}"
+        
+        # 构建命令
+        west build -b ${{ env.BOARD }} app -- \
+          -DSHIELD=${{ env.SHIELD }} \
+          -DZMK_CONFIG="${{ env.CONFIG_DIR }}" \
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+        
+        echo "✅ 构建完成"
+        ls -la build/zephyr/*.uf2 build/zephyr/*.hex 2>/dev/null || echo "未找到输出文件"
+        
+    - name: Save firmware to config folder
+      run: |
+        # 创建固件目录
+        mkdir -p config/firmware
+        
+        # 复制固件文件
+        if [ -f "zmk-src/build/zephyr/zmk.uf2" ]; then
+          cp zmk-src/build/zephyr/zmk.uf2 "config/firmware/dm17-${{ env.BOARD }}.uf2"
+          echo "✅ UF2 固件已保存"
+        fi
+        
+        if [ -f "zmk-src/build/zephyr/zmk.hex" ]; then
+          cp zmk-src/build/zephyr/zmk.hex "config/firmware/dm17-${{ env.BOARD }}.hex"
+          echo "✅ HEX 固件已保存"
+        fi
+        
+        echo "固件目录内容:"
+        ls -la config/firmware/
+        
+    - name: Upload firmware artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: dm17-firmware
-        path: firmware/*.uf2
-        if-no-files-found: warn
+        name: dm17-nrf52840dk-firmware
+        path: config/firmware/
+        retention-days: 30
